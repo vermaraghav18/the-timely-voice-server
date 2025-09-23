@@ -1,0 +1,9 @@
+# at news-reader/.gitignore (or place same rules in each package)
+node_modules/
+dist/
+.vite/
+.vercel/
+.env
+.env.*
+!.env.example
+.prisma/
