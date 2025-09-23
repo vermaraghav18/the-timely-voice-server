@@ -1,65 +1,87 @@
-require('dotenv').config();
+// server/src/index.js
+require("dotenv").config();
 
-const express = require('express');
-const session = require('express-session');
-const cors = require('cors');
+const express = require("express");
+const session = require("express-session");
+const cors = require("cors");
 
-const authRouter = require('./routes/auth');
-const articlesRouter = require('./routes/articles');
-const categoriesRouter = require('./routes/categories');
-const settingsRouter = require('./routes/settings');
+const authRouter = require("./routes/auth");
+const articlesRouter = require("./routes/articles");
+const categoriesRouter = require("./routes/categories");
+const settingsRouter = require("./routes/settings");
 
-// You already connect Prisma in ./db (prints "✅ Prisma connected")
-require('./db');
+// Connect Prisma (prints "Prisma connected" in your db module)
+require("./db");
 
 const app = express();
+const isProd = process.env.NODE_ENV === "production";
 
-// ----- CORS (for admin dev hosts) -----
-const ORIGINS = [
-  'http://localhost:5173',
-  'http://localhost:5174',
-];
+/* ---------------- CORS ---------------- */
+const envOrigins = (process.env.ALLOWED_ORIGINS || "")
+  .split(",")
+  .map(s => s.trim())
+  .filter(Boolean);
+
+// Always allow localhost when not in prod (handy for local testing)
+const devOrigins = isProd ? [] : ["http://localhost:5173", "http://localhost:5174"];
+
+// Final allowlist
+const ORIGINS = [...new Set([...envOrigins, ...devOrigins])];
+
+console.log("CORS origins (from env + dev):", ORIGINS);
+
+app.set("trust proxy", 1); // required on Render for secure cookies behind proxy
+
 app.use(cors({
-  origin: ORIGINS,
-  credentials: true,
+  origin(origin, cb) {
+    // allow requests with no Origin (e.g., curl, server-to-server)
+    if (!origin) return cb(null, true);
+    return cb(null, ORIGINS.includes(origin));
+  },
+  credentials: true, // allow cookies
 }));
 
-// ----- Body parsing -----
+/* ---------------- Parsers ---------------- */
 app.use(express.json());
 
-// ----- Sessions (MUST be before routes) -----
-app.set('trust proxy', 1); // good habit if you ever sit behind a proxy
+/* ---------------- Sessions ---------------- */
 app.use(session({
-  name: 'tv.sid',
-  secret: process.env.SESSION_SECRET || 'dev-change-this-secret',
+  name: "tv.sid",
+  secret: process.env.SESSION_SECRET || "dev-change-this-secret",
   resave: false,
   saveUninitialized: false,
   cookie: {
     httpOnly: true,
-    sameSite: 'lax',    // allows cookie with fetch credentials on same-site
-    secure: false,      // set true only when serving HTTPS
-    maxAge: 30 * 24 * 60 * 60 * 1000, // 30 days
+    secure: isProd,         // cookies only over HTTPS in production (Render)
+    sameSite: isProd ? "none" : "lax", // cross-site cookies required for Vercel -> Render
+    maxAge: 30 * 24 * 60 * 60 * 1000,  // 30 days
   },
 }));
 
-// ----- Routes -----
-app.use('/api/auth', authRouter);
-app.use('/api/articles', articlesRouter);
-app.use('/api/categories', categoriesRouter);
-app.use('/api/settings', settingsRouter);
+/* ---------------- Routes ---------------- */
+app.use("/api/auth", authRouter);
+app.use("/api/articles", articlesRouter);
+app.use("/api/categories", categoriesRouter);
+app.use("/api/settings", settingsRouter);
 
-// Health check
-app.get('/api/health', (req, res) => res.json({ ok: true }));
-
-// ----- Error handler (keeps 500s readable) -----
-app.use((err, req, res, next) => {
-  console.error(err);
-  res.status(500).json({ error: err.message || 'Internal Server Error' });
+// Health check & quick debug
+app.get("/api/health", (req, res) => {
+  res.json({
+    ok: true,
+    env: process.env.NODE_ENV,
+    origins: ORIGINS,
+    time: new Date().toISOString(),
+  });
 });
 
-// ----- Start -----
+/* ---------------- Error Handler ---------------- */
+app.use((err, req, res, next) => {
+  console.error(err);
+  res.status(500).json({ error: err.message || "Internal Server Error" });
+});
+
+/* ---------------- Start ---------------- */
 const PORT = process.env.PORT || 4000;
 app.listen(PORT, () => {
   console.log(`API listening on http://localhost:${PORT}`);
-  console.log(`CORS origins: ${ORIGINS.join(', ')}`);
 });
