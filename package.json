@@ -4,6 +4,9 @@
   "private": true,
   "main": "src/index.js",
   "scripts": {
+     "start": "node src/index.js",
+    "prestart": "prisma migrate deploy",
+    "postinstall": "prisma generate",
     "dev": "nodemon src/index.js",
     "start": "node src/index.js",
     "prisma:studio": "npx prisma studio",
