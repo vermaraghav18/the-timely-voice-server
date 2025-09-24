@@ -13,13 +13,16 @@ const settingsRouter = require("./routes/settings");
 // Connect Prisma (prints "Prisma connected" in your db module)
 require("./db");
 
+// <-- NEW: seed hook
+const { maybeSeed } = require("./seedOnBoot");
+
 const app = express();
 const isProd = process.env.NODE_ENV === "production";
 
 /* ---------------- CORS ---------------- */
 const envOrigins = (process.env.ALLOWED_ORIGINS || "")
   .split(",")
-  .map(s => s.trim())
+  .map((s) => s.trim())
   .filter(Boolean);
 
 // Always allow localhost when not in prod (handy for local testing)
@@ -32,31 +35,37 @@ console.log("CORS origins (from env + dev):", ORIGINS);
 
 app.set("trust proxy", 1); // required on Render for secure cookies behind proxy
 
-app.use(cors({
-  origin(origin, cb) {
-    // allow requests with no Origin (e.g., curl, server-to-server)
-    if (!origin) return cb(null, true);
-    return cb(null, ORIGINS.includes(origin));
-  },
-  credentials: true, // allow cookies
-}));
+app.use(
+  cors({
+    origin(origin, cb) {
+      // allow requests with no Origin (e.g., curl, server-to-server)
+      if (!origin) return cb(null, true);
+      const allowed = ORIGINS.includes(origin);
+      if (allowed) return cb(null, true);
+      return cb(null, false); // quietly block (avoids noisy errors in logs)
+    },
+    credentials: true, // allow cookies
+  })
+);
 
 /* ---------------- Parsers ---------------- */
 app.use(express.json());
 
 /* ---------------- Sessions ---------------- */
-app.use(session({
-  name: "tv.sid",
-  secret: process.env.SESSION_SECRET || "dev-change-this-secret",
-  resave: false,
-  saveUninitialized: false,
-  cookie: {
-    httpOnly: true,
-    secure: isProd,         // cookies only over HTTPS in production (Render)
-    sameSite: isProd ? "none" : "lax", // cross-site cookies required for Vercel -> Render
-    maxAge: 30 * 24 * 60 * 60 * 1000,  // 30 days
-  },
-}));
+app.use(
+  session({
+    name: "tv.sid",
+    secret: process.env.SESSION_SECRET || "dev-change-this-secret",
+    resave: false,
+    saveUninitialized: false,
+    cookie: {
+      httpOnly: true,
+      secure: isProd, // cookies only over HTTPS in production (Render)
+      sameSite: isProd ? "none" : "lax", // cross-site cookies required for Vercel -> Render
+      maxAge: 30 * 24 * 60 * 60 * 1000, // 30 days
+    },
+  })
+);
 
 /* ---------------- Routes ---------------- */
 app.use("/api/auth", authRouter);
@@ -80,8 +89,18 @@ app.use((err, req, res, next) => {
   res.status(500).json({ error: err.message || "Internal Server Error" });
 });
 
-/* ---------------- Start ---------------- */
-const PORT = process.env.PORT || 4000;
-app.listen(PORT, () => {
-  console.log(`API listening on http://localhost:${PORT}`);
+/* ---------------- Start (with seed-on-boot) ---------------- */
+async function start() {
+  // <-- NEW: run the seed only when flagged
+  await maybeSeed();
+
+  const PORT = process.env.PORT || 4000;
+  app.listen(PORT, () => {
+    console.log(`API listening on :${PORT}`);
+  });
+}
+
+start().catch((e) => {
+  console.error("Failed to start server:", e);
+  process.exit(1);
 });
