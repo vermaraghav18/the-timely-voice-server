@@ -60,9 +60,9 @@ app.use(
     saveUninitialized: false,
     cookie: {
       httpOnly: true,
-      secure: isProd,                  // HTTPS only in prod
+      secure: isProd,                 // required on Render (HTTPS)
       sameSite: isProd ? "none" : "lax",
-      partitioned: isProd ? true : false,  // <— ADD THIS
+      partitioned: isProd ? true : false, // <- REQUIRED for Chrome 3PC
       maxAge: 30 * 24 * 60 * 60 * 1000,
     },
   })
