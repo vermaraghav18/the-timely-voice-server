@@ -60,12 +60,14 @@ app.use(
     saveUninitialized: false,
     cookie: {
       httpOnly: true,
-      secure: isProd, // cookies only over HTTPS in production (Render)
-      sameSite: isProd ? "none" : "lax", // cross-site cookies required for Vercel -> Render
-      maxAge: 30 * 24 * 60 * 60 * 1000, // 30 days
+      secure: isProd,                 // required for SameSite=None/Partitioned
+      sameSite: isProd ? "none" : "lax",
+      partitioned: isProd ? true : false, // <-- add this line
+      maxAge: 30 * 24 * 60 * 60 * 1000,
     },
   })
 );
+
 
 /* ---------------- Routes ---------------- */
 app.use("/api/auth", authRouter);
