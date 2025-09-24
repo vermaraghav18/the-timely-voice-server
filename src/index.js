@@ -60,13 +60,14 @@ app.use(
     saveUninitialized: false,
     cookie: {
       httpOnly: true,
-      secure: isProd,                 // required for SameSite=None/Partitioned
+      secure: isProd,                  // HTTPS only in prod
       sameSite: isProd ? "none" : "lax",
-      partitioned: isProd ? true : false, // <-- add this line
+      partitioned: isProd ? true : false,  // <— ADD THIS
       maxAge: 30 * 24 * 60 * 60 * 1000,
     },
   })
 );
+
 
 
 /* ---------------- Routes ---------------- */
