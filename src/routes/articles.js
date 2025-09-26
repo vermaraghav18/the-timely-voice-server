@@ -1,4 +1,4 @@
-// src/routes/articles.js
+// server/src/routes/articles.js
 const express = require('express');
 const router = express.Router();
 const { prisma } = require('../db');
@@ -46,12 +46,13 @@ router.get('/', async (req, res, next) => {
 
     const where = { status };
     if (lang) where.language = lang;
+    // If your relation filter requires "is", change to: where.category = { is: { slug: category } }
     if (category) where.category = { slug: category };
     if (q) {
       where.OR = [
-        { title:   { contains: q } },
-        { summary: { contains: q } },
-        { body:    { contains: q } },
+        { title:   { contains: q, mode: 'insensitive' } },
+        { summary: { contains: q, mode: 'insensitive' } },
+        { body:    { contains: q, mode: 'insensitive' } },
       ];
     }
 
@@ -67,24 +68,6 @@ router.get('/', async (req, res, next) => {
     ]);
 
     res.json({ items, total, limit, offset });
-  } catch (e) {
-    next(e);
-  }
-});
-
-/* ------------ READ ONE (by slug) ------------ */
-// GET /api/articles/:slug
-router.get('/:slug', async (req, res, next) => {
-  try {
-    const slug = clean(req.params.slug);
-    if (!slug) return res.status(400).json({ error: 'Invalid slug' });
-
-    const article = await prisma.article.findUnique({
-      where: { slug },
-      include: { category: true }
-    });
-    if (!article) return res.status(404).json({ error: 'Not found' });
-    res.json(article);
   } catch (e) {
     next(e);
   }
@@ -129,8 +112,53 @@ router.post('/', async (req, res, next) => {
   }
 });
 
-/* ------------ UPDATE (PUT/PATCH) ------------ */
-// core update impl so we can share it for PUT and PATCH
+/* ======================================================================
+   EXPLICIT BY-SLUG ENDPOINTS (clean separation from numeric :id routes)
+   ====================================================================== */
+
+// GET /api/articles/by-slug/:slug
+router.get('/by-slug/:slug', async (req, res, next) => {
+  try {
+    const slug = clean(req.params.slug);
+    if (!slug) return res.status(400).json({ error: 'Invalid slug' });
+
+    const article = await prisma.article.findUnique({
+      where: { slug },
+      include: { category: true }
+    });
+    if (!article) return res.status(404).json({ error: 'Not found' });
+    res.json(article);
+  } catch (e) {
+    next(e);
+  }
+});
+
+// DELETE /api/articles/by-slug/:slug
+router.delete('/by-slug/:slug', async (req, res, next) => {
+  try {
+    const slug = clean(req.params.slug);
+    if (!slug) return res.status(400).json({ error: 'Invalid slug' });
+
+    const deleted = await prisma.article.delete({ where: { slug } });
+    // Return deleted row for convenience (or 204 if you prefer)
+    res.json(deleted);
+  } catch (e) {
+    // Prisma not-found -> 404 (P2025)
+    if (e && e.code === 'P2025') {
+      return res.status(404).json({ error: 'Not found' });
+    }
+    next(e);
+  }
+});
+
+/* ==========================================================
+   NUMERIC :id ROUTES — regex ensures only numbers hit these
+   ========================================================== */
+
+// PUT /api/articles/:id
+router.put('/:id(\\d+)', updateArticleHandler);
+// PATCH /api/articles/:id
+router.patch('/:id(\\d+)', updateArticleHandler);
 async function updateArticleHandler(req, res, next) {
   try {
     const id = Number(req.params.id);
@@ -167,23 +195,44 @@ async function updateArticleHandler(req, res, next) {
     if (e && e.code === 'P2002') {
       return res.status(409).json({ error: 'Slug already exists' });
     }
+    if (e && e.code === 'P2025') {
+      return res.status(404).json({ error: 'Not found' });
+    }
     next(e);
   }
 }
 
-// PUT /api/articles/:id
-router.put('/:id(\\d+)', updateArticleHandler);
-
-// PATCH /api/articles/:id (alias of PUT to be flexible)
-router.patch('/:id(\\d+)', updateArticleHandler);
-
-/* ------------ DELETE ------------ */
 // DELETE /api/articles/:id
 router.delete('/:id(\\d+)', async (req, res, next) => {
   try {
     const id = Number(req.params.id);
     await prisma.article.delete({ where: { id } });
     res.status(204).end();
+  } catch (e) {
+    if (e && e.code === 'P2025') {
+      return res.status(404).json({ error: 'Not found' });
+    }
+    next(e);
+  }
+});
+
+/* ==========================================================
+   LEGACY: KEEP GET /:slug for backwards compatibility
+   (this must come AFTER the numeric :id routes above)
+   ========================================================== */
+
+// GET /api/articles/:slug
+router.get('/:slug', async (req, res, next) => {
+  try {
+    const slug = clean(req.params.slug);
+    if (!slug) return res.status(400).json({ error: 'Invalid slug' });
+
+    const article = await prisma.article.findUnique({
+      where: { slug },
+      include: { category: true }
+    });
+    if (!article) return res.status(404).json({ error: 'Not found' });
+    res.json(article);
   } catch (e) {
     next(e);
   }
