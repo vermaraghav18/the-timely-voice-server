@@ -79,8 +79,18 @@ router.post('/', async (req, res, next) => {
       return res.status(400).json({ error: 'title, slug and status are required' });
     if (!['draft', 'published'].includes(d.status))
       return res.status(400).json({ error: 'status must be "draft" or "published"' });
-    if (!d.categoryId)
-      return res.status(400).json({ error: 'categoryId is required' });
+
+    // Make category optional: if missing, default to WORLD (auto-create if needed)
+    let categoryId = d.categoryId ? Number(d.categoryId) : null;
+    if (!categoryId) {
+      let cat = await prisma.category.findUnique({ where: { slug: 'world' } }).catch(() => null);
+      if (!cat) {
+        cat = await prisma.category.create({
+          data: { name: 'WORLD', slug: 'world', sortIndex: 0 }
+        });
+      }
+      categoryId = cat.id;
+    }
 
     const created = await prisma.article.create({
       data: {
