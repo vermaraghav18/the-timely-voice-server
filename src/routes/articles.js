@@ -1,8 +1,9 @@
+// src/routes/articles.js
 const express = require('express');
 const router = express.Router();
 const { prisma } = require('../db');
 
-// Helper to normalize query params coming as "undefined"/"null"/"" etc.
+/* ------------ small helpers ------------ */
 const clean = (v) => {
   if (v === undefined || v === null) return undefined;
   if (typeof v !== 'string') return v;
@@ -11,12 +12,31 @@ const clean = (v) => {
   return t;
 };
 
-// -----------------------------
-// LIST: GET /api/articles?category=tech&lang=en&q=...&status=published&limit=20&offset=0
-// -----------------------------
+// Resolve a valid categoryId from the request body;
+// if missing/invalid, upsert and use WORLD.
+async function resolveCategoryId(d) {
+  let categoryId;
+  if (d && d.categoryId !== undefined && d.categoryId !== null && `${d.categoryId}`.trim() !== '') {
+    const maybe = Number(d.categoryId);
+    if (!Number.isNaN(maybe) && Number.isFinite(maybe)) {
+      categoryId = maybe;
+    }
+  }
+  if (!categoryId) {
+    const world = await prisma.category.upsert({
+      where: { slug: 'world' },
+      update: {},
+      create: { name: 'WORLD', slug: 'world', sortIndex: 0 },
+    });
+    categoryId = world.id;
+  }
+  return categoryId;
+}
+
+/* ------------ LIST ------------ */
+// GET /api/articles?category=world&lang=en&q=...&status=published&limit=20&offset=0
 router.get('/', async (req, res, next) => {
   try {
-    // sanitize all incoming query params
     const category = clean(req.query.category);
     const lang     = clean(req.query.lang);
     const status   = clean(req.query.status) || 'published';
@@ -24,7 +44,6 @@ router.get('/', async (req, res, next) => {
     const limit    = Math.min(Number(req.query.limit) || 20, 100);
     const offset   = Math.max(Number(req.query.offset) || 0, 0);
 
-    // Build "where" incrementally; IMPORTANT: no 'mode' for SQLite
     const where = { status };
     if (lang) where.language = lang;
     if (category) where.category = { slug: category };
@@ -48,12 +67,13 @@ router.get('/', async (req, res, next) => {
     ]);
 
     res.json({ items, total, limit, offset });
-  } catch (e) { next(e); }
+  } catch (e) {
+    next(e);
+  }
 });
 
-// -----------------------------
-// READ ONE (by slug): GET /api/articles/:slug
-// -----------------------------
+/* ------------ READ ONE (by slug) ------------ */
+// GET /api/articles/:slug
 router.get('/:slug', async (req, res, next) => {
   try {
     const slug = clean(req.params.slug);
@@ -65,47 +85,37 @@ router.get('/:slug', async (req, res, next) => {
     });
     if (!article) return res.status(404).json({ error: 'Not found' });
     res.json(article);
-  } catch (e) { next(e); }
+  } catch (e) {
+    next(e);
+  }
 });
 
-// -----------------------------
-// CREATE: POST /api/articles
-// -----------------------------
+/* ------------ CREATE ------------ */
+// POST /api/articles
 router.post('/', async (req, res, next) => {
   try {
     const d = req.body || {};
-
     if (!d.title || !d.slug || !d.status)
       return res.status(400).json({ error: 'title, slug and status are required' });
     if (!['draft', 'published'].includes(d.status))
       return res.status(400).json({ error: 'status must be "draft" or "published"' });
 
-    // Make category optional: if missing, default to WORLD (auto-create if needed)
-    let categoryId = d.categoryId ? Number(d.categoryId) : null;
-    if (!categoryId) {
-      let cat = await prisma.category.findUnique({ where: { slug: 'world' } }).catch(() => null);
-      if (!cat) {
-        cat = await prisma.category.create({
-          data: { name: 'WORLD', slug: 'world', sortIndex: 0 }
-        });
-      }
-      categoryId = cat.id;
-    }
+    const categoryId = await resolveCategoryId(d);
 
     const created = await prisma.article.create({
       data: {
         title: d.title,
         slug: d.slug,
         status: d.status,
-        categoryId: Number(d.categoryId),
-        summary: d.summary || '',
-        body: d.body || '',
-        heroImageUrl: d.heroImageUrl || null,
-        thumbnailUrl: d.thumbnailUrl || null,
-        author: d.author || null,
-        source: d.source || null,
-        language: d.language || 'en',
-        tagsCsv: d.tagsCsv || null,
+        categoryId,                    // <-- use resolved id
+        summary: d.summary ?? '',
+        body: d.body ?? '',
+        heroImageUrl: d.heroImageUrl ?? null,
+        thumbnailUrl: d.thumbnailUrl ?? null,
+        author: d.author ?? null,
+        source: d.source ?? null,
+        language: d.language ?? 'en',
+        tagsCsv: d.tagsCsv ?? null,
       },
       include: { category: true },
     });
@@ -119,16 +129,19 @@ router.post('/', async (req, res, next) => {
   }
 });
 
-// -----------------------------
-// UPDATE (by numeric id): PUT /api/articles/:id
-// -----------------------------
-router.put('/:id(\\d+)', async (req, res, next) => {
+/* ------------ UPDATE (PUT/PATCH) ------------ */
+// core update impl so we can share it for PUT and PATCH
+async function updateArticleHandler(req, res, next) {
   try {
     const id = Number(req.params.id);
+    if (!Number.isFinite(id)) return res.status(400).json({ error: 'invalid id' });
     const d = req.body || {};
 
     if (d.status && !['draft', 'published'].includes(d.status))
       return res.status(400).json({ error: 'status must be "draft" or "published"' });
+
+    // If categoryId is missing/invalid, default to WORLD
+    const categoryId = await resolveCategoryId(d);
 
     const updated = await prisma.article.update({
       where: { id },
@@ -143,7 +156,7 @@ router.put('/:id(\\d+)', async (req, res, next) => {
         source: d.source,
         language: d.language,
         status: d.status,
-        categoryId: d.categoryId != null ? Number(d.categoryId) : undefined,
+        categoryId,                 // <-- guaranteed valid id now
         tagsCsv: d.tagsCsv,
       },
       include: { category: true },
@@ -156,17 +169,24 @@ router.put('/:id(\\d+)', async (req, res, next) => {
     }
     next(e);
   }
-});
+}
 
-// -----------------------------
-// DELETE (by numeric id): DELETE /api/articles/:id
-// -----------------------------
+// PUT /api/articles/:id
+router.put('/:id(\\d+)', updateArticleHandler);
+
+// PATCH /api/articles/:id (alias of PUT to be flexible)
+router.patch('/:id(\\d+)', updateArticleHandler);
+
+/* ------------ DELETE ------------ */
+// DELETE /api/articles/:id
 router.delete('/:id(\\d+)', async (req, res, next) => {
   try {
     const id = Number(req.params.id);
     await prisma.article.delete({ where: { id } });
     res.status(204).end();
-  } catch (e) { next(e); }
+  } catch (e) {
+    next(e);
+  }
 });
 
 module.exports = router;
